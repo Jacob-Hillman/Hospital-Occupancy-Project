@@ -1,0 +1,233 @@
+---
+title: "Data Descriptor"
+author: "Jacob Hillman, Eric Yao"
+date: "2024-09-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+
+
+
+
+
+```{r}
+data = read.csv('COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_State_Timeseries__RAW__20240930.csv')
+```
+
+```{r}
+head(data)
+```
+```{r}
+# clean the data
+data_cleaned <- data %>%
+  filter(!is.na(critical_staffing_shortage_today_yes) & 
+         !is.na(critical_staffing_shortage_today_no) & 
+         !is.na(staffed_adult_icu_bed_occupancy) & 
+         !is.na(total_staffed_adult_icu_beds))
+
+data_cleaned <- data_cleaned %>%
+  mutate(staffed_adult_icu_bed_occupancy =     as.numeric(staffed_adult_icu_bed_occupancy),
+         total_staffed_adult_icu_beds = as.numeric(total_staffed_adult_icu_beds))
+
+data_cleaned <- data_cleaned %>%
+  mutate(percent_shortage = (critical_staffing_shortage_today_yes / 
+                             (critical_staffing_shortage_today_yes + 
+                              critical_staffing_shortage_today_no)) * 100,
+         icu_occupancy_percent = (staffed_adult_icu_bed_occupancy / 
+                                   total_staffed_adult_icu_beds) * 100)
+
+analysis_data <- data_cleaned %>%
+  select(state, date, percent_shortage, icu_occupancy_percent)
+
+analysis_data <- analysis_data %>%
+  filter(is.finite(percent_shortage) & is.finite(icu_occupancy_percent))
+
+
+head(analysis_data)
+
+ggplot(analysis_data, aes(x = percent_shortage)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(title = "Histogram of Percent Staffing Shortage",
+       x = "Percent Staffing Shortage",
+       y = "Frequency") +
+  theme_minimal()
+
+ggplot(analysis_data, aes(x = icu_occupancy_percent)) +
+  geom_histogram(binwidth = 5, fill = "salmon", color = "black", alpha = 0.7) +
+  labs(title = "Histogram of ICU Occupancy Percent",
+       x = "ICU Occupancy Percent",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+
+summary(analysis_data$icu_occupancy_percent)
+summary(analysis_data$percent_shortage)
+```
+
+
+
+```{r}
+occupancy_issues <- data_cleaned %>%
+  filter(staffed_adult_icu_bed_occupancy > total_staffed_adult_icu_beds)
+
+# View problematic rows
+print(occupancy_issues)
+```
+```{r}
+correlation <- cor(analysis_data$percent_shortage, analysis_data$icu_occupancy_percent, use = "complete.obs")
+print(paste("Correlation between staffing shortages and ICU occupancy:", correlation))
+```
+```{r}
+ggplot(analysis_data, aes(x = percent_shortage, y = icu_occupancy_percent))+
+   geom_point(color = "blue", alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  labs(
+    title = "Relationship Between Staffing Shortage and ICU Bed Occupancy",
+    x = "Percent of Hospitals with Staffing Shortage",
+    y = "ICU Bed Occupancy Percentage"
+  ) +
+  theme_minimal()
+```
+```{r}
+library(tidyr)
+overtime <- data_cleaned %>%
+  group_by(date) %>%
+  filter(n()>1) %>%
+  summarize(
+    avg_staffing_shortage_percent = mean(percent_shortage, na.rm = TRUE),
+    avg_icu_bed_occupancy_percent = mean(icu_occupancy_percent, na.rm = TRUE)
+  )%>%
+  drop_na() %>%
+  filter(is.finite(avg_staffing_shortage_percent) & 
+         is.finite(avg_icu_bed_occupancy_percent))
+
+overtime$date <- as.Date(overtime$date)
+overtime_long <- overtime %>%
+  pivot_longer(
+    cols = c(avg_staffing_shortage_percent, avg_icu_bed_occupancy_percent),
+    names_to = "metric",
+    values_to = "percent"
+  )
+
+ggplot(overtime, aes(x = date, y = avg_staffing_shortage_percent)) + 
+   geom_line(color = "blue", linewidth = 1) +
+  geom_point(color = "blue") +
+  labs(
+    title = "Percent Staffing Shortage Over Time",
+    x = "Date",
+    y = "Percent Staffing Shortage"
+  ) +
+  theme_minimal() +
+   scale_x_date(date_labels = "%Y-%m-%d", date_breaks = "2 month") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+ggplot(overtime, aes(x = date, y = avg_icu_bed_occupancy_percent)) + 
+   geom_line(color = "blue", linewidth = 1) +
+  geom_point(color = "blue") +
+  labs(
+    title = "ICU Bed Occupancy Percent Over Time",
+    x = "Date",
+    y = "ICU Bed Occupancy Percent"
+  ) +
+  theme_minimal() +
+   scale_x_date(date_labels = "%Y-%m-%d", date_breaks = "2 month") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+```{r}
+overtime
+```
+```{r}
+
+model <- lm(analysis_data$percent_shortage~ analysis_data$icu_occupancy_percent, data = analysis_data)
+summary(model)
+
+ggplot(analysis_data, aes(x = icu_occupancy_percent, y = percent_shortage)) +
+  geom_point(alpha = 0.5) +  # Add points for each observation
+  geom_smooth(method = "lm", col = "blue", se = TRUE) +  # Add regression line
+  labs(title = "Correlation between Staffing Shortage and ICU Bed Capacity",
+       x = "ICU Bed Capacity (%)",
+       y = "Staffing Shortage (%)") +
+  theme_minimal()+
+  theme(text=element_text(size=14))
+
+```
+```{r}
+ggsave("my_plot4.png", dpi = 300, width = 10, height = 8, units = "in")
+
+```
+
+```{r}
+getwd()
+```
+
+
+```{r}
+analysis_data2<-analysis_data%>%
+  mutate(binary_rv =state %in% c("DC", "NY", "MA","ND","WA"))
+
+```
+
+```{r}
+head(analysis_data2)
+```
+```{r}
+model <- lm(analysis_data$percent_shortage~ analysis_data$icu_occupancy_percent, data = analysis_data)
+summary(model)
+```
+
+```{r}
+parallel.lines.model.fit = lm(percent_shortage ~ factor(binary_rv) + icu_occupancy_percent, data=analysis_data2)
+```
+
+```{r}
+summary(parallel.lines.model.fit)
+```
+
+```{r}
+ggplot(analysis_data2, aes(x = icu_occupancy_percent, y = percent_shortage,color = factor(binary_rv))) +
+  geom_point(alpha = 0.5) +  # Add points for each observation
+  geom_smooth(method = "lm", aes(group = factor(binary_rv)), se = TRUE) +  # Add regression lines
+  labs(title = "Correlation between Staffing Shortage and ICU Bed Capacity",
+       x = "ICU Bed Capacity (%)",
+       y = "Staffing Shortage (%)") +
+  theme_minimal()+
+    scale_color_discrete(name = "Binary RV")
+
+```
+
+```{r}
+ggplot(analysis_data2, aes(x = icu_occupancy_percent, y = percent_shortage,color = factor(binary_rv))) +
+  geom_point(alpha = 0.5) +  # Add points for each observation
+  geom_smooth(method = "lm", aes(group = factor(binary_rv)), se = TRUE) +  # Add regression lines
+  labs(title = "Correlation between Staffing Shortage and ICU Bed Capacity",
+       x = "ICU Bed Capacity (%)",
+       y = "Staffing Shortage (%)") +
+  theme_minimal()+
+    scale_color_manual(
+    name = "State Category",  # Set the legend title
+    values = c("salmon", "deepskyblue"),
+    labels = c("All States", "Wealthy States") ) +
+      theme(text=element_text(size=14)# Custom labels for factor levels
+      )
+```
+```{r}
+ggsave("my_plot3.png", dpi = 300, width = 10, height = 8, units = "in")
+```
+
